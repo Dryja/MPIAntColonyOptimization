@@ -14,7 +14,7 @@ def findPheromonsPath (pheromonsPath, bestPath, pheromons, nCities):
     pheromonsPath[nCities - 1] = pheromons[nextCity, bestPath[0]]
 
 def computeProbabilities(currentCity, path, map, nCities, pheromons, alpha, beta):
-    probabilities = []
+    probabilities = [0]*nCities
     total = 0
     for i in range(nCities):  
         if (path[i] != -1 or i == currentCity):
@@ -32,16 +32,13 @@ def computeProbabilities(currentCity, path, map, nCities, pheromons, alpha, beta
 
     for i in range(nCities):
         probabilities[i] = probabilities[i] / total
-    
     return probabilities
 
 
 def computeNextCity(currentCity, path, map, nCities, pheromons, alpha, beta, random):
-    probabilities = computeProbabilities(currentCity, path, map, nCities, pheromons, alpha, beta);
-    
+    probabilities = computeProbabilities(currentCity, path, map, nCities, pheromons, alpha, beta)
     value = (random % 100) + 1
     sum = 0
-
     for i in range(nCities):
         sum += math.ceil(probabilities[i] * 100)
         if (sum >= value):
@@ -83,17 +80,6 @@ def computeCost(bestCost, bestPath, currentPath, map, nCities):
     else:
         return bestCost
 
-comm = MPI.COMM_WORLD
-status = MPI.Status 
-rank = comm.Get_rank()
-size = comm.Get_size()
-randomNumbers = []
-nRandomNumbers = 200
-start = None
-map = []
-nAntsPerNode = []
-bestCost = math.inf
-
 if len(sys.argv) != 8:
     if rank == 0:
         print(
@@ -102,6 +88,21 @@ if len(sys.argv) != 8:
             )
         )
     exit()
+
+comm = MPI.COMM_WORLD
+status = MPI.Status 
+rank = comm.Get_rank()
+size = comm.Get_size()
+randomNumbers = []
+nRandomNumbers = 200
+start = None
+nAntsPerNode = []
+bestCost = math.inf
+antsNum = externalIterNum = onNodeIterNum = nCities = 0
+randomNumbers = []
+alpha = beta = evaporationCoeff = 0.0
+random_counter = 0
+terminationCondition = 0
 
 if rank == 0:
     start = timer()
@@ -115,79 +116,28 @@ if rank == 0:
     beta = float(sys.argv[6])
     evaporationCoeff = float(sys.argv[7])
     print("Iterations:", externalIterNum * onNodeIterNum)
-    nCities = map.size**1/2
+    nCities = int(np.asscalar(np.loadtxt(sys.argv[1], max_rows=1)))
 
     for i in range(1, nRandomNumbers):
         randomNumbers.append(random.randint(1, 100000))
 
-if MPI.Bcast(nRandomNumbers, 1, MPI.LONG, 0, comm) != MPI.SUCCESS:
-    print("Node  : Error in Broadcast of nRandomNumbers".format(rank))
-    MPI.Finalize()
-    exit(-1)
+randomNumbers = comm.bcast(randomNumbers, root=0)
+antsNum = comm.bcast(antsNum, root=0) 
+onNodeIterNum = comm.bcast(onNodeIterNum, root=0)
+externalIterNum = comm.bcast(externalIterNum, root=0) 
+alpha = comm.bcast(alpha, root=0)
+beta = comm.bcast(beta, root=0)
+evaporationCoeff = comm.bcast(evaporationCoeff, root=0)
+nCities = comm.bcast(nCities, root=0) 
+map = comm.bcast(map, root=0) 
 
-if MPI.Bcast(randomNumbers, nRandomNumbers, MPI.LONG, 0, comm) != MPI.SUCCESS:
-    print("Node  : Error in Broadcast of RandomNumbers".format(rank))
-    MPI.Finalize()
-    exit(-1)
+pheromons = np.full((nCities, nCities), 0.1)
+pheromonsUpdate = np.full((nCities, nCities), 1)
+localPheromonsPath = otherPheromonsPath = [0.0] * nCities
+bestPath = currentPath = otherBestPath = [-1] * nCities
 
-if MPI.Bcast(antsNum, 1, MPI.INT, 0, comm) != MPI.SUCCESS: 
-    print("Node {} : Error in Broadcast of antsNum".format(rank))
-    MPI.Finalize()  
-    exit(-1)
-
-if MPI.BCAST(onNodeIterNum, 1, MPI.LONG, 0, comm) != MPI.SUCCESS: 
-    print("Node {} : Error in Broadcast of onNodeIterNum".format(rank))
-    MPI.Finalize()  
-    exit(-1)  
-
-if MPI.BCAST(externalIterNum, 1, MPI.LONG, 0, comm) != MPI.SUCCESS:
-    print("Node {} : Error in Broadcast of externalIterNum".format(rank))
-    MPI.Finalize()  
-    exit(-1)
-
-if MPI.BCAST(alpha, 1, MPI.DOUBLE, 0, comm) != MPI.SUCCESS: 
-    print("Node {} : Error in Broadcast of alpha".format(rank))
-    MPI.Finalize()  
-    exit(-1)
-
-if MPI.BCAST(beta, 1, MPI.DOUBLE, 0, comm) != MPI.SUCCESS: 
-    print("Node {} : Error in Broadcast of beta".format(rank))
-    MPI.Finalize()  
-    exit(-1)
-
-if MPI.BCAST(evaporationCoeff, 1, MPI.DOUBLE, 0, comm) != MPI.SUCCESS: 
-    print("Node {} : Error in Broadcast of evaporationCoeff".format(rank))
-    MPI.Finalize()  
-    exit(-1)
-
-if MPI.BCAST(nCities, 1, MPI.INT, 0, comm) != MPI.SUCCESS: 
-    print("Node {} : Error in Broadcast of nCities".format(rank))
-    MPI.Finalize()  
-    exit(-1)
-
-if MPI.Bcast(map, nCities*nCities, MPI.INT, 0, comm) != MPI.SUCCESS:
-    print("Node {} : Error in Broadcast of map".format(rank))
-    MPI.Finalize()  
-    exit(-1)
-
-pheromons = []
-pheromonsUpdate = []
-localPheromonsPath = []
-otherBestPath = []
-otherPheromonsPath = []
-bestPath = []
-currentPath = []
-
-for i in range(nCities):
-    otherBestPath.append(-1)
-    currentPath.append(-1)
-    bestPath.append(-1)
-
-for i in range(nCities * nCities):
-    pheromons.append(0.1)
-
-antsPerNode = antsNum / size;
-restAnts = antsNum - antsPerNode * size;
+antsPerNode = antsNum // size
+restAnts = antsNum - antsPerNode * size
 
 for i in range(size):
     nAntsPerNode.append(antsPerNode)
@@ -199,9 +149,9 @@ nAnts = nAntsPerNode[rank]
 nAntsBeforeMe = 0
 for i in range(size):
     if i < rank:
-      nAntsBeforeMe += nAntsPerNode[i]
+        nAntsBeforeMe += nAntsPerNode[i]
     else: 
-      break
+        break
 
 random_counter = (random_counter + (onNodeIterNum * nAntsBeforeMe * nCities)) % nRandomNumbers
 
@@ -215,7 +165,7 @@ while external_loop_counter < externalIterNum:
         for ant_counter in range(nAnts):
             for i in range(nCities):
                 currentPath[i] = -1
-    
+
             rand = randomNumbers[random_counter]
             currentCity = rand % nCities
             random_counter = (random_counter + 1) % nRandomNumbers
@@ -224,14 +174,12 @@ while external_loop_counter < externalIterNum:
                 rand = randomNumbers[random_counter]
                 random_counter = (random_counter + 1) % nRandomNumbers
                 currentCity = computeNextCity(currentCity, currentPath, map, nCities, pheromons, alpha, beta, rand)
-    
                 if currentCity == -1:
                     print("There is an error choosing the next city in iteration {} for ant {} on node {}\n".format(loop_counter, ant_counter, rank))
                     MPI.Finalize()
                     exit(-1)
     
                 currentPath[currentCity] = cities_counter
-    
             oldCost = bestCost
             bestCost = computeCost(bestCost, bestPath, currentPath, map, nCities)
     
@@ -243,18 +191,17 @@ while external_loop_counter < externalIterNum:
             terminationCondition = 0
         else:
             terminationCondition += 1
-    
-        for j in range(nCities*nCities):
-            pheromons[j] *= evaporationCoeff
 
-        updatePheromons(pheromons, bestPath, bestCost, nCities);
+        with np.nditer(pheromons, op_flags=['readwrite']) as pheromon:
+            for x in pheromon:
+                x *= evaporationCoeff
+
+
+        updatePheromons(pheromons, bestPath, bestCost, nCities)
     
         loop_counter += 1
     
-    findPheromonsPath(localPheromonsPath, bestPath, pheromons, nCities);
-
-    for j in range(nCities*nCities):
-        pheromonsUpdate[j] = 1.0
+    findPheromonsPath(localPheromonsPath, bestPath, pheromons, nCities)
 
     tempBestCost = bestCost
     tempBestPath = [0]*nCities
@@ -270,22 +217,10 @@ while external_loop_counter < externalIterNum:
             otherTerminationCondition = terminationCondition
             otherBestCost = bestCost
     
-        if (MPI.Bcast(otherBestPath, nCities, MPI.INT, i, comm) != MPI.SUCCESS):
-            print("Node {} : Error in Broadcast of otherBestPath".format(rank));
-            MPI.Finalize()
-            exit(-1)
-        if (MPI.Bcast(otherPheromonsPath, nCities, MPI.DOUBLE, i, comm) != MPI.SUCCESS):
-            print("Node {} : Error in Broadcast of otherPheromonsPath".format(rank))
-            MPI.Finalize()
-            exit(-1)
-        if (MPI.Bcast(otherTerminationCondition, 1, MPI.LONG, i, comm) != MPI.SUCCESS):
-            print("Node {} : Error in Broadcast of otherTerminationCondition".format(rank))
-            MPI.Finalize()
-            exit(-1)
-        if (MPI.Bcast(otherBestCost, 1, MPI.LONG, i, comm) != MPI.SUCCESS):
-            print("Node {} : Error in Broadcast of otherBestCost".format(rank))
-            MPI.Finalize()
-            exit(-1)
+        otherBestPath = comm.bcast(otherBestPath, root=0) 
+        otherPheromonsPath = comm.bcast(otherPheromonsPath, root=0) 
+        otherTerminationCondition = comm.bcast(otherTerminationCondition, root=0)
+        otherBestCost =  comm.bcast(otherBestCost, root=0)
 
         if (rank != i):
             if (otherBestCost < tempBestCost):
@@ -317,24 +252,17 @@ while external_loop_counter < externalIterNum:
 
     external_loop_counter += 1
 
-    random_counter = (random_counter + (onNodeIterNum * (antsNum - nAnts) * nCities)) % nRandomNumbers;
+    random_counter = (random_counter + (onNodeIterNum * (antsNum - nAnts) * nCities)) % nRandomNumbers
 
 if (rank == 0):
     for i in range(1, size):
-        if (MPI.Recv(otherBestPath, nCities, MPI.INT, i, MPI.ANY_TAG, comm, status) != MPI.SUCCESS):
-            print("Node {} : Error in Recv of otherBestPath".format(rank))
-            MPI.Finalize()
-            exit(-1)
-        oldCost = bestCost
-        bestCost = computeCost(bestCost, bestPath, otherBestPath, map, nCities);
+        otherBestPath = comm.Recv(otherBestPath, source=i, tag=MPI.Any_Tag)
+        bestCost = computeCost(bestCost, bestPath, otherBestPath, map, nCities)
 
         if (oldCost > bestCost):
             bestPath = otherBestPath[:]
 else:
-    if (MPI.Send(bestPath, nCities, MPI.INT, 0, 0, comm) != MPI.SUCCESS): 
-        print("Node {} : Error in Send of bestPath".format(rank))
-        MPI.Finalize()
-        exit(-1)
+    comm.Send(bestPath, dest=0, tag=0)
 
 if (rank == 0):
     print("best cost : {}\n".format(bestCost))
