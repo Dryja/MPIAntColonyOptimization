@@ -103,6 +103,9 @@ randomNumbers = []
 alpha = beta = evaporationCoeff = 0.0
 random_counter = 0
 terminationCondition = 0
+otherTerminationCondition = 0
+otherBestCost = 0
+
 
 if rank == 0:
     start = timer()
@@ -118,7 +121,7 @@ if rank == 0:
     print("Iterations:", externalIterNum * onNodeIterNum)
     nCities = int(np.asscalar(np.loadtxt(sys.argv[1], max_rows=1)))
 
-    for i in range(1, nRandomNumbers):
+    for i in range(nRandomNumbers):
         randomNumbers.append(random.randint(1, 100000))
 
 randomNumbers = comm.bcast(randomNumbers, root=0)
@@ -142,7 +145,7 @@ restAnts = antsNum - antsPerNode * size
 for i in range(size):
     nAntsPerNode.append(antsPerNode)
     if restAnts > i: 
-      nAntsPerNode[i] += 1
+        nAntsPerNode[i] += 1
 
 nAnts = nAntsPerNode[rank]
 
@@ -242,8 +245,7 @@ while external_loop_counter < externalIterNum:
     pheromons[tempBestPath[nCities-1],tempBestPath[0]] += tempPheromonsPath[nCities - 1]
     pheromons[tempBestPath[0],tempBestPath[nCities-1]] += tempPheromonsPath[nCities - 1]
 
-    for j in range(nCities*nCities):
-        pheromons[j] = pheromons[j] / pheromonsUpdate[j]
+    pheromons /= pheromonsUpdate
 
     bestCost = tempBestCost
     bestPath = tempBestPath[:]
@@ -256,13 +258,13 @@ while external_loop_counter < externalIterNum:
 
 if (rank == 0):
     for i in range(1, size):
-        otherBestPath = comm.Recv(otherBestPath, source=i, tag=MPI.Any_Tag)
+        otherBestPath = comm.recv(source=i)
         bestCost = computeCost(bestCost, bestPath, otherBestPath, map, nCities)
 
         if (oldCost > bestCost):
             bestPath = otherBestPath[:]
 else:
-    comm.Send(bestPath, dest=0, tag=0)
+    comm.send(bestPath, dest=0)
 
 if (rank == 0):
     print("best cost : {}\n".format(bestCost))

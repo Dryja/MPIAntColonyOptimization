@@ -5,7 +5,7 @@ import numpy as np
 
 
 def random_map(n):
-    return np.random.randint(1000, size=(n, n))
+    return np.random.randint(1, 1000, size=(n, n))
 
 
 if __name__ == "__main__":
