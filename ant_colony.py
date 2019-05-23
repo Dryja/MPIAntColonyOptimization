@@ -2,128 +2,50 @@ import sys, random, math
 from mpi4py import MPI
 import numpy as np
 from timeit import default_timer as timer
-# run command mpiexec python .\ant_colony.py map 1 1 1 0.4 0.3 0.2
+from ant_func import *
 
-def findPheromonsPath (pheromonsPath, bestPath, pheromons, nCities):
-    previousCity = 0
-    nextCity = 0
-    for i in range(1, nCities):
-        previousCity = bestPath[i - 1]
-        nextCity = bestPath[i]
-        pheromonsPath[i-1] = pheromons[previousCity, nextCity]
-    pheromonsPath[nCities - 1] = pheromons[nextCity, bestPath[0]]
-
-def computeProbabilities(currentCity, path, map, nCities, pheromons, alpha, beta):
-    probabilities = [0]*nCities
-    total = 0
-    for i in range(nCities):  
-        if (path[i] != -1 or i == currentCity):
-            probabilities[i] = 0
-        else:
-            p = math.pow(1.0 / map[currentCity,i],alpha) * math.pow(pheromons[currentCity,i], beta)
-            probabilities[i] = p
-            total += p
-
-    if (total == 0):
-        for i in range(nCities):
-            if (path[i] == -1 or i != currentCity):
-                probabilities[i] = 1
-                total += 1
-
-    for i in range(nCities):
-        probabilities[i] = probabilities[i] / total
-    return probabilities
-
-
-def computeNextCity(currentCity, path, map, nCities, pheromons, alpha, beta, random):
-    probabilities = computeProbabilities(currentCity, path, map, nCities, pheromons, alpha, beta)
-    value = (random % 100) + 1
-    sum = 0
-    for i in range(nCities):
-        sum += math.ceil(probabilities[i] * 100)
-        if (sum >= value):
-            return i
-    return -1
-
-def updatePheromons(pheromons, path, cost, nCities):
-    orderedCities = [0] * nCities
-    for i in range(nCities):
-        order = path[i]
-        orderedCities[order] = i
-
-    for i in range(nCities-1):
-        pheromons[orderedCities[i],orderedCities[i + 1]] += 1.0/cost
-        pheromons[orderedCities[i + 1],orderedCities[i]] += 1.0/cost
-        if (pheromons[orderedCities[i],orderedCities[i + 1]] > 1):
-            pheromons[orderedCities[i],orderedCities[i + 1]] = 1.0
-            pheromons[orderedCities[i + 1],orderedCities[i]] = 1.0
-
-    pheromons[orderedCities[nCities - 1],orderedCities[0]] += 1.0/cost
-    pheromons[orderedCities[0],orderedCities[nCities - 1]] += 1.0/cost
-    if (pheromons[orderedCities[nCities - 1],orderedCities[0]] > 1.0):
-        pheromons[orderedCities[nCities - 1],orderedCities[0]] = 1.0
-        pheromons[orderedCities[0],orderedCities[nCities - 1]] = 1.0
-
-def computeCost(bestCost, bestPath, currentPath, map, nCities):
-    currentCost = 0
-    orderedCities = [0] * nCities
-    for i in range(nCities):
-        orderedCities[currentPath[i]] = i
-
-    for i in range(nCities-1):
-        currentCost += map[orderedCities[i],orderedCities[i + 1]]
-  
-    currentCost += map[orderedCities[nCities - 1], orderedCities[0]]
-
-    if (bestCost > currentCost):
-        return currentCost
-    else:
-        return bestCost
-
-if len(sys.argv) != 8:
-    if rank == 0:
-        print(
-            "Use:  map_file antsNum externalIterNum onNodeIterNum alpha beta evaporationCoeff".format(
-                sys.argv[0]
-            )
-        )
-    exit()
+# run command mpiexec python .\ant_colony.py map.txt random.txt 1 4 1 0.4 0.3 0.2
 
 comm = MPI.COMM_WORLD
 status = MPI.Status 
 rank = comm.Get_rank()
 size = comm.Get_size()
-randomNumbers = []
-nRandomNumbers = 200
-start = None
-nAntsPerNode = []
-bestCost = math.inf
-antsNum = externalIterNum = onNodeIterNum = nCities = 0
-randomNumbers = []
-alpha = beta = evaporationCoeff = 0.0
-random_counter = 0
-terminationCondition = 0
-otherTerminationCondition = 0
-otherBestCost = 0
 
+randomNumbers = []
+start = None
+bestCost = math.inf
+nRandomNumbers = antsNum = externalIterNum = onNodeIterNum = nCities = 0
+alpha = beta = evaporationCoeff = 0.0
+terminationCondition = otherTerminationCondition = 0
+otherBestCost = external_loop_counter = 0
+antsBestCost = math.inf
+
+if len(sys.argv) != 9:
+    if rank == 0:
+        print(
+            "Use:  map_file nRandomNumbers antsNum externalIterNum onNodeIterNum alpha beta evaporationCoeff".format(
+                sys.argv[0]
+            )
+        )
+    exit()
 
 if rank == 0:
-    start = timer()
     print("Number of nodes:", size)
     map = np.loadtxt(sys.argv[1], skiprows=1, dtype=int)
     print(map.shape)
-    antsNum = int(sys.argv[2])
-    externalIterNum = int(sys.argv[3])
-    onNodeIterNum = int(sys.argv[4])
-    alpha = float(sys.argv[5])
-    beta = float(sys.argv[6])
-    evaporationCoeff = float(sys.argv[7])
+    randomNumbers = np.loadtxt(sys.argv[2], skiprows=1, dtype=int)
+    antsNum = int(sys.argv[3])
+    externalIterNum = int(sys.argv[4])
+    onNodeIterNum = int(sys.argv[5])
+    alpha = float(sys.argv[6])
+    beta = float(sys.argv[7])
+    evaporationCoeff = float(sys.argv[8])
     print("Iterations:", externalIterNum * onNodeIterNum)
-    nCities = int(np.asscalar(np.loadtxt(sys.argv[1], max_rows=1)))
+    nCities = len(map)
+    nRandomNumbers = len(randomNumbers)
+    start = timer()
 
-    for i in range(nRandomNumbers):
-        randomNumbers.append(random.randint(1, 100000))
-
+nRandomNumbers = comm.bcast(nRandomNumbers, root=0)
 randomNumbers = comm.bcast(randomNumbers, root=0)
 antsNum = comm.bcast(antsNum, root=0) 
 onNodeIterNum = comm.bcast(onNodeIterNum, root=0)
@@ -139,28 +61,9 @@ pheromonsUpdate = np.full((nCities, nCities), 1)
 localPheromonsPath = otherPheromonsPath = [0.0] * nCities
 bestPath = currentPath = otherBestPath = [-1] * nCities
 
-antsPerNode = antsNum // size
-restAnts = antsNum - antsPerNode * size
+nAnts, nAntsBeforeMe = countAnts(rank, size, antsNum)
 
-for i in range(size):
-    nAntsPerNode.append(antsPerNode)
-    if restAnts > i: 
-        nAntsPerNode[i] += 1
-
-nAnts = nAntsPerNode[rank]
-
-nAntsBeforeMe = 0
-for i in range(size):
-    if i < rank:
-        nAntsBeforeMe += nAntsPerNode[i]
-    else: 
-        break
-
-random_counter = (random_counter + (onNodeIterNum * nAntsBeforeMe * nCities)) % nRandomNumbers
-
-antsBestCost = math.inf
-
-external_loop_counter = 0
+random_counter = (onNodeIterNum * nAntsBeforeMe * nCities) % nRandomNumbers
 
 while external_loop_counter < externalIterNum:
     loop_counter = 0
